@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Local Music Player</title>
+<style>
+  :root{--bg:#07101b;--panel:#0f1724;--muted:#9aa6b8;--accent:#7afcff}
+  *{box-sizing:border-box}body{margin:0;font-family:system-ui,Segoe UI,Roboto,Arial;background:var(--bg);color:#e6eef8;display:flex;flex-direction:column;height:100vh}
+  header{padding:12px;border-bottom:1px solid rgba(255,255,255,0.03);display:flex;gap:12px;align-items:center}
+  h1{margin:0;font-size:16px;color:var(--accent)}small{color:var(--muted)}
+  .controls{margin-left:auto;display:flex;gap:8px;align-items:center}
+  input[type=file]{display:none} 
+  main{display:flex;flex:1;gap:12px;padding:12px;overflow:hidden}
+  .list{width:360px;max-width:42%;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);border:1px solid rgba(255,255,255,0.03);border-radius:10px;padding:8px;overflow:auto}
+  .player{flex:1;display:flex;flex-direction:column;gap:12px;align-items:center;justify-content:center;padding:12px}
+  .track{width:100%;text-align:center}
+  .track h2{margin:6px 0 2px;font-size:18px}
+  .track p{margin:0;color:var(--muted);font-size:13px}
+  ul{list-style:none;padding:0;margin:0}
+  li{padding:8px;border-radius:8px;margin-bottom:6px;display:flex;align-items:center;gap:8px;cursor:pointer}
+  li:hover{background:rgba(255,255,255,0.02)}
+  li.playing{background:linear-gradient(90deg,rgba(122,252,255,0.06),rgba(178,124,255,0.04));border-left:4px solid var(--accent)}
+  .meta{flex:1;min-width:0;overflow:hidden}
+  .meta .title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .meta .sub{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .controls-bar{display:flex;gap:8px;align-items:center}
+  button{background:transparent;border:1px solid rgba(255,255,255,0.05);color:#eaf6fb;padding:8px 10px;border-radius:8px;cursor:pointer}
+  button.tall{padding:10px 14px;font-size:16px}
+  .small{padding:6px 8px;font-size:13px}
+  .slider{width:100%}
+  .bottom{width:100%;display:flex;gap:12px;align-items:center}
+  .time{min-width:88px;color:var(--muted);font-size:13px;text-align:center}
+  .muted{color:var(--muted)}
+  .kbd{background:#0b0f16;padding:4px 6px;border-radius:6px;border:1px solid rgba(255,255,255,0.03);font-size:12px}
+  footer{padding:8px 12px;color:var(--muted);font-size:13px;text-align:center;border-top:1px solid rgba(255,255,255,0.03)}
+  #vis {
+    width: 100%;
+    height: 400px; 
+    background: transparent;
+    border-radius: 6px;
+    margin-top: 6px;
+  }
+  @media(max-width:820px){main{flex-direction:column} .list{width:100%;max-width:100%;height:220px;overflow:auto}}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Local Music Player</h1>
+    <small>Choose a folder with your album (FLAC/MP3/OGG/WAV)</small>
+  </div>
+  <div class="controls">
+    <label class="kbd">Space ▶/▌▌ • ← prev • → next • S shuffle • L loop</label>
+    <button id="openFolder" class="small">Open Folder</button>
+    <input id="folder" type="file" webkitdirectory directory multiple accept="audio/*" />
+  </div>
+</header>
+
+<main>
+  <section class="list" id="listSection" aria-live="polite">
+    <div style="margin-bottom:8px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;align-items:center">
+      <span>Files</span>
+      <button id="clearList" class="small" title="Unload files">Unload</button>
+    </div>
+    <ul id="fileList"></ul>
+  </section>
+
+  <section class="player" aria-label="Player">
+    <div class="track">
+      <h2 id="tTitle">No track loaded</h2>
+      <p id="tSub" class="muted">Select a folder to begin</p>
+    </div>
+
+    <audio id="audio" preload="metadata"></audio>
+
+    <div style="width:100%;max-width:760px">
+      <input id="seek" class="slider" type="range" min="0" max="100" value="0" />
+      <div class="bottom">
+        <div class="time" id="curTime">0:00</div>
+        <div style="flex:1">
+          <div class="controls-bar" style="justify-content:center">
+            <button id="prev" class="small">⏮ Prev</button>
+            <button id="play" class="tall">▶ Play</button>
+            <button id="next" class="small">Next ⏭</button>
+            <button id="shuffle" class="small">🔀 Off</button>
+            <button id="loop" class="small">Loop: Off</button>
+          </div>
+        </div>
+        <div style="width:150px;display:flex;gap:6px;align-items:center;justify-content:flex-end">
+          <input id="vol" type="range" min="0" max="1" step="0.01" value="0.9" style="width:86px">
+          <select id="rate" title="Playback speed">
+            <option>0.75</option><option>1</option><option selected>1.25</option><option>1.5</option><option>2</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <canvas id="vis" aria-hidden="true"></canvas>
+  </section>
+</main>
+
+<footer>Works entirely offline. Folder select uses the browser file picker; nothing is uploaded.</footer>
+
+<script>
+(() => {
+  const folder = document.getElementById('folder');
+  const openFolder = document.getElementById('openFolder');
+  const clearListBtn = document.getElementById('clearList');
+  const fileListEl = document.getElementById('fileList');
+  const audio = document.getElementById('audio');
+  const playBtn = document.getElementById('play');
+  const prevBtn = document.getElementById('prev');
+  const nextBtn = document.getElementById('next');
+  const shuffleBtn = document.getElementById('shuffle');
+  const loopBtn = document.getElementById('loop');
+  const seek = document.getElementById('seek');
+  const curTime = document.getElementById('curTime');
+  const tTitle = document.getElementById('tTitle');
+  const tSub = document.getElementById('tSub');
+  const vol = document.getElementById('vol');
+  const rate = document.getElementById('rate');
+  const vis = document.getElementById('vis');
+
+  let files = [];
+  let index = 0;
+  let shuffle = false;
+  let loopMode = 0;
+  let order = [];
+  let prevObjectURL = null;
+
+  let audioCtx=null, analyser=null, sourceNode=null, animationId=null, audioConnected=false;
+
+  function fmtTime(s){
+    if (!isFinite(s)) return '0:00';
+    const m = Math.floor(s/60), sec = Math.floor(s%60);
+    return m + ':' + (sec<10? '0'+sec: sec);
+  }
+
+  function renderList(){
+    fileListEl.innerHTML='';
+    files.forEach((f,i)=>{
+      const li=document.createElement('li');
+      li.dataset.i=i;
+      const meta=document.createElement('div'); meta.className='meta';
+      const title=document.createElement('div'); title.className='title'; title.textContent=f.name;
+      const sub=document.createElement('div'); sub.className='sub'; sub.textContent=f.path;
+      meta.appendChild(title); meta.appendChild(sub);
+      li.appendChild(meta);
+      li.addEventListener('click', ()=>{ setIndex(i); play(); });
+      li.addEventListener('dblclick', ()=> play());
+      fileListEl.appendChild(li);
+    });
+    highlight();
+  }
+
+  function highlight(){
+    Array.from(fileListEl.children).forEach(li=>li.classList.remove('playing'));
+    if(!order.length) return;
+    const realIdx=order[index];
+    const el=fileListEl.querySelector('li[data-i="'+realIdx+'"]');
+    if(el) el.classList.add('playing');
+  }
+
+  function buildOrder(){
+    order = files.map((_,i)=>i);
+    if(shuffle){
+      for(let i=order.length-1;i>0;i--){
+        const j=Math.floor(Math.random()*(i+1));
+        [order[i],order[j]]=[order[j],order[i]];
+      }
+    }
+  }
+
+  function setIndex(i){
+    const pos=order.indexOf(i);
+    if(pos!==-1) index=pos; else index=0;
+    loadCurrent();
+  }
+
+  function loadCurrent(autoplay=false){
+    if(!files.length) return;
+    const fobj=files[order[index]];
+
+    if(prevObjectURL){ try{ URL.revokeObjectURL(prevObjectURL); }catch(e){} prevObjectURL=null; }
+
+    const newUrl=URL.createObjectURL(fobj.file);
+    audio.src=newUrl;
+    prevObjectURL=newUrl;
+
+    tTitle.textContent=fobj.name;
+    tSub.textContent=fobj.path;
+    highlight();
+
+    ensureAudioConnected();
+    if(autoplay) play();
+  }
+
+  function play(){
+    if(!files.length) return;
+    if(audioCtx && audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+    audio.play().catch(()=>{});
+  }
+  function pause(){ audio.pause(); }
+
+  playBtn.addEventListener('click', ()=>{ if(audio.paused) play(); else pause(); });
+  prevBtn.addEventListener('click', ()=>{
+    if(!files.length) return;
+    if(index>0) index--; else index=(loopMode===2? order.length-1:0);
+    loadCurrent(true);
+  });
+  nextBtn.addEventListener('click', ()=>{
+    if(!files.length) return;
+    if(index<order.length-1) index++; else index=(loopMode===2?0:order.length-1);
+    loadCurrent(true);
+  });
+  shuffleBtn.addEventListener('click', ()=>{
+    shuffle=!shuffle;
+    shuffleBtn.textContent=shuffle?'🔀 On':'🔀 Off';
+    const currentFile=files.length? order[index]:null;
+    buildOrder();
+    if(currentFile!==null) index=order.indexOf(currentFile);
+    highlight();
+  });
+  loopBtn.addEventListener('click', ()=>{
+    loopMode=(loopMode+1)%3;
+    loopBtn.textContent=loopMode===0?'Loop: Off':loopMode===1?'Loop: One':'Loop: All';
+  });
+
+  audio.addEventListener('timeupdate', ()=>{
+    if(!isNaN(audio.duration) && audio.duration>0){
+      const pct=(audio.currentTime/audio.duration)*100;
+      seek.value=pct;
+      curTime.textContent=fmtTime(audio.currentTime)+' / '+fmtTime(audio.duration);
+    } else { curTime.textContent=fmtTime(audio.currentTime); }
+    playBtn.textContent=audio.paused?'▶ Play':'⏸ Pause';
+  });
+  seek.addEventListener('input',(e)=>{
+    if(!isNaN(audio.duration) && audio.duration>0){
+      const pct=e.target.value;
+      audio.currentTime=(pct/100)*audio.duration;
+    }
+  });
+
+  audio.addEventListener('ended', ()=>{
+    if(loopMode===1){ audio.currentTime=0; play(); return; }
+    if(index<order.length-1){ index++; loadCurrent(true); } 
+    else { if(loopMode===2){ index=0; loadCurrent(true); } else { audio.currentTime=audio.duration||0; pause(); } }
+  });
+
+  vol.addEventListener('input', ()=>audio.volume=vol.value);
+  rate.addEventListener('change', ()=>audio.playbackRate=parseFloat(rate.value));
+
+  window.addEventListener('keydown',(e)=>{
+    if(['INPUT','SELECT','TEXTAREA'].includes(e.target.tagName)) return;
+    if(e.code==='Space'){ e.preventDefault(); if(audio.paused) play(); else pause(); }
+    if(e.key==='ArrowRight'){ e.preventDefault(); nextBtn.click(); }
+    if(e.key==='ArrowLeft'){ e.preventDefault(); prevBtn.click(); }
+    if(e.key.toLowerCase()==='s') shuffleBtn.click();
+    if(e.key.toLowerCase()==='l') loopBtn.click();
+  });
+
+  folder.addEventListener('change',(ev)=>{
+    const list=Array.from(ev.target.files||[]);
+    files=list.filter(f=>f.type.startsWith('audio') || /\.(flac|mp3|wav|ogg|m4a|opus)$/i.test(f.name))
+              .map(f=>({file:f, path:f.webkitRelativePath||f.name, name:f.name}));
+    files.sort((a,b)=>a.path.localeCompare(b.path,undefined,{numeric:true,sensitivity:'base'}));
+    buildOrder(); index=0; renderList(); loadCurrent();
+  });
+  openFolder.addEventListener('click', ()=> folder.click());
+  clearListBtn.addEventListener('click', ()=>{
+    if(prevObjectURL){ try{ URL.revokeObjectURL(prevObjectURL); }catch(e){} prevObjectURL=null; }
+    files=[]; order=[]; index=0; fileListEl.innerHTML=''; audio.pause(); audio.removeAttribute('src'); tTitle.textContent='No track loaded'; tSub.textContent='Select a folder to begin';
+    stopVisualizer();
+  });
+
+  function ensureAudioConnected(){
+    if(audioConnected) return;
+    try{
+      audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+      sourceNode=audioCtx.createMediaElementSource(audio);
+      analyser=audioCtx.createAnalyser();
+      analyser.fftSize=512;
+      analyser.smoothingTimeConstant=0.7;
+      sourceNode.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      audioConnected=true;
+      startVisualizer();
+    }catch(e){ audioConnected=false; }
+  }
+
+  function startVisualizer(){
+    if(!analyser) return;
+    const ctx=vis.getContext('2d');
+    let devicePixelRatio=window.devicePixelRatio||1;
+
+    function resize(){
+      devicePixelRatio=window.devicePixelRatio||1;
+      vis.width=Math.floor(vis.clientWidth*devicePixelRatio);
+      vis.height=Math.floor(vis.clientHeight*devicePixelRatio);
+      ctx.setTransform(devicePixelRatio,0,0,devicePixelRatio,0,0);
+    }
+    resize();
+    window.addEventListener('resize',resize);
+
+    const bufferLength=analyser.frequencyBinCount;
+    const dataArray=new Uint8Array(bufferLength);
+
+    function draw(){
+      animationId=requestAnimationFrame(draw);
+      analyser.getByteFrequencyData(dataArray);
+      ctx.clearRect(0,0,vis.width,vis.height);
+
+      const barWidth=(vis.width/bufferLength);
+      let x=0;
+
+      for(let i=0;i<bufferLength;i++){
+        const barHeight=(dataArray[i]/255)*vis.height*0.6;
+        const red=Math.min(barHeight*2,255);
+        const green=Math.min(50+barHeight*0.5,255);
+        const blue=Math.min(150+barHeight*0.3,255);
+        ctx.fillStyle=`rgb(${red},${green},${blue})`;
+        ctx.fillRect(x,vis.height-barHeight,barWidth,barHeight);
+        x+=barWidth+1;
+      }
+    }
+    if(!animationId) draw();
+  }
+
+  function stopVisualizer(){
+    if(animationId){ cancelAnimationFrame(animationId); animationId=null; }
+    const ctx=vis.getContext('2d');
+    ctx.clearRect(0,0,vis.clientWidth,vis.clientHeight);
+  }
+
+  window.addEventListener('beforeunload', ()=>{
+    if(prevObjectURL){ try{ URL.revokeObjectURL(prevObjectURL); }catch(e){} prevObjectURL=null; }
+  });
+
+  audio.volume=parseFloat(vol.value);
+  audio.playbackRate=parseFloat(rate.value);
+})();
+</script>
+</body>
+</html>
